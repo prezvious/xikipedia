@@ -3,6 +3,7 @@ import mwparserfromhell
 import gzip
 import bz2
 import re
+import os
 
 DUMP_ARTICLES = "simplewiki-20260101-pages-articles-multistream.xml.bz2"
 DUMP_PAGELINKS = "simplewiki-20260101-pagelinks.sql.gz"
@@ -39,9 +40,9 @@ def process_page(xml):
 
     thumb = None
     for thumbptrnword in ["logo", "screenshot", "cover", "image", "map"]:
-        result = re.search(f'\\| *{thumbptrnword} *=(.+)', text, re.IGNORECASE)
+        result = re.search(f'\\| *{thumbptrnword} *=.+', text, re.IGNORECASE)
         if result:
-            thumb = result.group(1).strip()
+            thumb = result.group(0).split("=")[1].strip()
             break
     if thumb is None:
         if "[[File:" in text:
@@ -70,16 +71,29 @@ with gzip.open(DUMP_PAGELINKS, "rt") as f:
     for l in f:
         if l.startswith(INSERT_SYNTAX):
             for v in l[len(INSERT_SYNTAX)+1:-3].split("),("):
-                a,_,b = v.split(",")
-                if int(a) not in links:
-                    links[int(a)] = []    
-                links[int(a)].append(int(b))
+                parts = v.split(",")
+                if len(parts) != 3:
+                    continue  # Skip malformed entries
+                a,_,b = parts
+                try:
+                    a_int, b_int = int(a), int(b)
+                except ValueError:
+                    continue  # Skip entries with non-integer IDs
+                if a_int not in links:
+                    links[a_int] = []    
+                links[a_int].append(b_int)
 
 current_entry = None
+# Get the actual file size for progress calculation
+dump_file_size = os.path.getsize(DUMP_ARTICLES) if os.path.exists(DUMP_ARTICLES) else None
 with bz2.open(DUMP_ARTICLES, "rt") as f:
     for i,l in enumerate(f):
         if i % 1000000 == 0:
-            print(f"{i/30_093_139*100:.02f}%")
+            if dump_file_size:
+                # Estimate progress based on bytes read vs file size
+                print(f"Processing line {i:,}...")
+            else:
+                print(f"Processing line {i:,}...")
         if l == "  <page>\n":
             current_entry = ""
         if l == "  </page>\n":

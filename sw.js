@@ -1,7 +1,11 @@
-const SW_VERSION = '1.1.3';
+const SW_VERSION = '1.1.4';
 
-self.addEventListener('install', () => {
+self.addEventListener('install', (event) => {
   self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(clients.claim());
 });
 
 self.addEventListener("fetch", (event) => {
@@ -27,15 +31,15 @@ self.addEventListener("fetch", (event) => {
     if (cachedResponse)
       return cachedResponse;
     const isSmolData = filename == "smoldata.json";
-    // todo: delete after verifying the new one downloaded
-    if (isSmolData)
-      await caches.delete("smoldata");
     const cache = await caches.open(isSmolData ? "smoldata" : "html");
     try {
       const networkResponse = await fetch(request);
       if (isSmolData)
         progressMonitor(event.clientId, networkResponse.clone());
       await cache.put(request, networkResponse.clone());
+      // Only delete old cache after successful download and storage
+      if (isSmolData)
+        await caches.delete("smoldata-old");
       return networkResponse;
     } catch (error) {
       return new Response("Network error happened", {
@@ -69,6 +73,11 @@ function progressMonitor(clientId, response) {
         let client;
         clients.get(clientId).then(c => {
           client = c;
+          if (!client) {
+            console.warn('Client not found, cannot send progress messages');
+            read(); // Continue reading even without client
+            return;
+          }
           read();
         });
 
@@ -81,7 +90,9 @@ function progressMonitor(clientId, response) {
 
             controller.enqueue(value);
             loaded += value.byteLength;
-            client.postMessage({event:"downloadProgress",data:loaded})
+            if (client) {
+              client.postMessage({event:"downloadProgress",data:loaded})
+            }
             read();
           })
           .catch(error => {
