@@ -898,7 +898,12 @@
         addProfileButton.onclick = () => {
             const profileName = prompt("Profile name");
             if (profileName && profileName.length) {
-                addProfile(profileName);
+                // Sanitize profile name to prevent XSS
+                const sanitized = profileName.replace(/[<>\"'&]/g, (char) => {
+                    const entities = {'<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;','&':'&amp;'};
+                    return entities[char] || char;
+                });
+                addProfile(sanitized);
                 profilesModal.close();
                 showProfilesModal();
             }
@@ -1031,7 +1036,7 @@
         const postYes = document.createElement("button");
         postDiv.classList.add("post");
         postDiv.onclick = () => {
-            window.open(getArticleLink(nextPost.title));
+            window.open(getArticleLink(nextPost.title), '_blank', 'noopener,noreferrer');
             if (!postDiv.dataset.engaged)
                 postDiv.dataset.engaged = engagePost(nextPost, 75);
         };
@@ -1112,7 +1117,7 @@
     }
 
     function render() {
-        if (document.documentElement.scrollHeight < scrollY+innerHeight + 1500)
+        if (document.visibilityState === 'visible' && document.documentElement.scrollHeight < scrollY+innerHeight + 1500)
             createNextPost();
         requestAnimationFrame(render);
     }
@@ -1147,26 +1152,38 @@ async function* streamToAsyncIterable(stream) {
 
     let lastBytesProgress = 0;
     function updateProgress(bytesProgress) {
+        const mbLoaded = (bytesProgress / 1024 / 1024).toFixed(1);
+        const totalMB = (DATA_SIZE / 1024 / 1024).toFixed(1);
         if (Math.floor(lastBytesProgress/DATA_SIZE*100) < Math.floor(bytesProgress/DATA_SIZE*100)) {
-            loadStatus(`${Math.floor(bytesProgress/DATA_SIZE*100)}% of 34MB loaded`)
+            loadStatus(`${Math.floor(bytesProgress/DATA_SIZE*100)}% of ${totalMB}MB loaded`)
             lastBytesProgress = bytesProgress;
         }
     }
 
     async function getFileWithProgress(url) {
-        const resp = await fetch(url, {cache: "force-cache"});
-        let responseSize = 0;
-        const bytes = new Uint8Array(DATA_SIZE);
-        for await (const chunk of streamToAsyncIterable(resp.body)) {
-            if (Math.floor(responseSize/DATA_SIZE*100) < Math.floor((responseSize+chunk.length)/DATA_SIZE*100))
-                startBtn.innerText = `Xikipedia is loading... (${Math.floor(responseSize/DATA_SIZE*100)}% of 34MB loaded)`;
-            bytes.set(chunk, responseSize);
-            responseSize += chunk.length;
+        try {
+            const resp = await fetch(url, {cache: "force-cache"});
+            if (!resp.ok) throw new Error(`HTTP error: ${resp.status}`);
+            let responseSize = 0;
+            const bytes = new Uint8Array(DATA_SIZE);
+            for await (const chunk of streamToAsyncIterable(resp.body)) {
+                const mbLoaded = (responseSize / 1024 / 1024).toFixed(1);
+                const totalMB = (DATA_SIZE / 1024 / 1024).toFixed(1);
+                if (Math.floor(responseSize/DATA_SIZE*100) < Math.floor((responseSize+chunk.length)/DATA_SIZE*100))
+                    startBtn.innerText = `Xikipedia is loading... (${Math.floor(responseSize/DATA_SIZE*100)}% of ${totalMB}MB loaded)`;
+                bytes.set(chunk, responseSize);
+                responseSize += chunk.length;
+            }
+            const totalMB = (DATA_SIZE / 1024 / 1024).toFixed(1);
+            startBtn.innerText = `Xikipedia is loading... (100% of ${totalMB}MB loaded)`;
+            await new Promise(requestAnimationFrame);
+            await new Promise(requestAnimationFrame);
+            return JSON.parse(new TextDecoder().decode(bytes));
+        } catch (error) {
+            console.error('Failed to download data:', error);
+            startBtn.innerText = 'Download failed. Please try again.';
+            throw error;
         }
-        startBtn.innerText = `Xikipedia is loading... (100% of 34MB loaded)`;
-        await new Promise(requestAnimationFrame);
-        await new Promise(requestAnimationFrame);
-        return JSON.parse(new TextDecoder().decode(bytes));
     }
 
     async function checkVersionAsync() {
